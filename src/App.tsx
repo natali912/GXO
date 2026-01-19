@@ -121,18 +121,25 @@ function App() {
                 </div>
                 <div className="flex-1">
                   <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                    Добавьте токен бота
+                    Добавьте токен бота в переменные окружения
                   </h3>
                   <p className="text-gray-600 mb-3">
-                    Вставьте токен, полученный от BotFather:
+                    Добавьте токен в переменные окружения Supabase:
                   </p>
-                  <input
-                    type="text"
-                    value={botToken}
-                    onChange={(e) => setBotToken(e.target.value)}
-                    placeholder="1234567890:ABCdefGHIjklMNOpqrsTUVwxyz"
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition"
-                  />
+                  <div className="bg-gray-50 p-4 rounded-lg border">
+                    <p className="text-sm text-gray-700 mb-2">
+                      1. Откройте настройки проекта Supabase
+                    </p>
+                    <p className="text-sm text-gray-700 mb-2">
+                      2. Перейдите в раздел "Edge Functions"
+                    </p>
+                    <p className="text-sm text-gray-700 mb-2">
+                      3. Добавьте переменную окружения:
+                    </p>
+                    <code className="block bg-white p-2 rounded border text-sm">
+                      TELEGRAM_BOT_TOKEN = ваш_токен_от_BotFather
+                    </code>
+                  </div>
                 </div>
               </div>
             </div>
@@ -179,15 +186,19 @@ function App() {
                     Установите webhook
                   </h3>
                   <p className="text-gray-600 mb-4">
-                    Нажмите кнопку ниже, чтобы автоматически настроить webhook для вашего бота:
+                    Установите webhook вручную через Telegram Bot API:
                   </p>
-                  <button
-                    onClick={setWebhook}
-                    disabled={!botToken}
-                    className="w-full bg-blue-600 text-white font-semibold py-3 px-6 rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition"
-                  >
-                    Установить Webhook
-                  </button>
+                  <div className="bg-gray-50 p-4 rounded-lg border">
+                    <p className="text-sm text-gray-700 mb-2">
+                      Отправьте GET запрос на:
+                    </p>
+                    <code className="block bg-white p-2 rounded border text-xs break-all">
+                      https://api.telegram.org/bot[ВАШ_ТОКЕН]/setWebhook?url={webhookUrl}
+                    </code>
+                    <p className="text-sm text-gray-500 mt-2">
+                      Замените [ВАШ_ТОКЕН] на токен от BotFather
+                    </p>
+                  </div>
                 </div>
               </div>
             </div>
