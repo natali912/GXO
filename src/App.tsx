@@ -79,8 +79,18 @@ function App() {
 
         <div className="bg-white rounded-lg shadow-lg p-8">
           <h2 className="text-2xl font-semibold text-gray-900 mb-6">
-            Настройка бота
+            Диагностика и настройка бота
           </h2>
+
+          <div className="mb-8 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+            <h3 className="text-lg font-semibold text-yellow-800 mb-2">🔍 Проверьте настройки</h3>
+            <div className="space-y-2 text-sm text-yellow-700">
+              <p>1. <strong>Токен бота:</strong> Добавлен ли TELEGRAM_BOT_TOKEN в переменные окружения Supabase?</p>
+              <p>2. <strong>Webhook:</strong> Установлен ли webhook на правильный URL?</p>
+              <p>3. <strong>База данных:</strong> Созданы ли все таблицы в Supabase?</p>
+              <p>4. <strong>Логи:</strong> Проверьте логи Edge Functions в Supabase Dashboard</p>
+            </div>
+          </div>
 
           <div className="space-y-8">
             <div className="border-l-4 border-blue-600 pl-6">
@@ -186,8 +196,29 @@ function App() {
                     Установите webhook
                   </h3>
                   <p className="text-gray-600 mb-4">
-                    Установите webhook вручную через Telegram Bot API:
+                    Установите webhook через Telegram Bot API или используйте форму ниже:
                   </p>
+                  
+                  <div className="mb-4">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Токен бота:
+                    </label>
+                    <input
+                      type="text"
+                      value={botToken}
+                      onChange={(e) => setBotToken(e.target.value)}
+                      placeholder="Введите токен от BotFather"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  
+                  <button
+                    onClick={setWebhook}
+                    className="mb-4 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition"
+                  >
+                    Установить webhook
+                  </button>
+                  
                   <div className="bg-gray-50 p-4 rounded-lg border">
                     <p className="text-sm text-gray-700 mb-2">
                       Отправьте GET запрос на:
@@ -197,6 +228,36 @@ function App() {
                     </code>
                     <p className="text-sm text-gray-500 mt-2">
                       Замените [ВАШ_ТОКЕН] на токен от BotFather
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <div className="border-l-4 border-red-600 pl-6">
+              <div className="flex items-start">
+                <div className="flex-shrink-0 w-8 h-8 bg-red-600 rounded-full flex items-center justify-center text-white font-bold mr-4">
+                  5
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                    Проверьте логи
+                  </h3>
+                  <p className="text-gray-600 mb-3">
+                    Если бот не работает, проверьте логи в Supabase Dashboard:
+                  </p>
+                  <div className="bg-gray-50 p-4 rounded-lg border">
+                    <p className="text-sm text-gray-700 mb-2">
+                      1. Откройте Supabase Dashboard
+                    </p>
+                    <p className="text-sm text-gray-700 mb-2">
+                      2. Перейдите в "Edge Functions" → "telegram-bot"
+                    </p>
+                    <p className="text-sm text-gray-700 mb-2">
+                      3. Нажмите "Logs" для просмотра ошибок
+                    </p>
+                    <p className="text-sm text-gray-700">
+                      4. Отправьте /start боту и проверьте появились ли новые логи
                     </p>
                   </div>
                 </div>

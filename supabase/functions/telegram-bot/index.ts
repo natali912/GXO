@@ -47,88 +47,134 @@ interface TelegramUpdate {
   };
 }
 
+// Логирование для отладки
+function log(message: string, data?: any) {
+  console.log(`[TelegramBot] ${message}`, data ? JSON.stringify(data, null, 2) : '');
+}
+
 // Создание или получение пользователя
 async function getOrCreateUser(telegramUser: any) {
-  const { data: existingUser } = await supabase
-    .from('users')
-    .select('*')
-    .eq('telegram_id', telegramUser.id)
-    .single();
+  try {
+    log('Getting or creating user', { telegram_id: telegramUser.id });
+    
+    const { data: existingUser, error: selectError } = await supabase
+      .from('users')
+      .select('*')
+      .eq('telegram_id', telegramUser.id)
+      .single();
 
-  if (existingUser) {
-    return existingUser;
-  }
+    if (selectError && selectError.code !== 'PGRST116') {
+      log('Error selecting user', selectError);
+      throw selectError;
+    }
 
-  const { data: newUser, error } = await supabase
-    .from('users')
-    .insert({
-      telegram_id: telegramUser.id,
-      username: telegramUser.username,
-      first_name: telegramUser.first_name,
-      last_name: telegramUser.last_name,
-    })
-    .select()
-    .single();
+    if (existingUser) {
+      log('User found', existingUser);
+      return existingUser;
+    }
 
-  if (error) {
-    console.error('Error creating user:', error);
+    log('Creating new user');
+    const { data: newUser, error: insertError } = await supabase
+      .from('users')
+      .insert({
+        telegram_id: telegramUser.id,
+        username: telegramUser.username || null,
+        first_name: telegramUser.first_name || 'User',
+        last_name: telegramUser.last_name || null,
+      })
+      .select()
+      .single();
+
+    if (insertError) {
+      log('Error creating user', insertError);
+      throw insertError;
+    }
+
+    log('User created successfully', newUser);
+    return newUser;
+  } catch (error) {
+    log('Error in getOrCreateUser', error);
     throw error;
   }
-
-  return newUser;
 }
 
 // Отправка сообщения в Telegram
 async function sendMessage(chatId: number, text: string, replyMarkup?: any) {
-  const botToken = Deno.env.get('TELEGRAM_BOT_TOKEN');
-  if (!botToken) {
-    throw new Error('TELEGRAM_BOT_TOKEN not set');
+  try {
+    const botToken = Deno.env.get('TELEGRAM_BOT_TOKEN');
+    if (!botToken) {
+      throw new Error('TELEGRAM_BOT_TOKEN not set');
+    }
+
+    const payload: any = {
+      chat_id: chatId,
+      text: text,
+      parse_mode: 'HTML',
+    };
+
+    if (replyMarkup) {
+      payload.reply_markup = replyMarkup;
+    }
+
+    log('Sending message', { chatId, text: text.substring(0, 100) });
+
+    const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    const result = await response.json();
+    
+    if (!result.ok) {
+      log('Telegram API error', result);
+      throw new Error(`Telegram API error: ${result.description}`);
+    }
+
+    return result;
+  } catch (error) {
+    log('Error sending message', error);
+    throw error;
   }
-
-  const payload: any = {
-    chat_id: chatId,
-    text: text,
-    parse_mode: 'HTML',
-  };
-
-  if (replyMarkup) {
-    payload.reply_markup = replyMarkup;
-  }
-
-  const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-
-  return response.json();
 }
 
 // Редактирование сообщения
 async function editMessage(chatId: number, messageId: number, text: string, replyMarkup?: any) {
-  const botToken = Deno.env.get('TELEGRAM_BOT_TOKEN');
-  if (!botToken) {
-    throw new Error('TELEGRAM_BOT_TOKEN not set');
+  try {
+    const botToken = Deno.env.get('TELEGRAM_BOT_TOKEN');
+    if (!botToken) {
+      throw new Error('TELEGRAM_BOT_TOKEN not set');
+    }
+
+    const payload: any = {
+      chat_id: chatId,
+      message_id: messageId,
+      text: text,
+      parse_mode: 'HTML',
+    };
+
+    if (replyMarkup) {
+      payload.reply_markup = replyMarkup;
+    }
+
+    const response = await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    const result = await response.json();
+    
+    if (!result.ok) {
+      log('Telegram edit message error', result);
+      // Не бросаем ошибку для редактирования, так как сообщение может быть уже изменено
+    }
+
+    return result;
+  } catch (error) {
+    log('Error editing message', error);
+    // Не бросаем ошибку для редактирования
   }
-
-  const payload: any = {
-    chat_id: chatId,
-    message_id: messageId,
-    text: text,
-    parse_mode: 'HTML',
-  };
-
-  if (replyMarkup) {
-    payload.reply_markup = replyMarkup;
-  }
-
-  const response = await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-
-  return response.json();
 }
 
 // Главное меню
@@ -161,7 +207,7 @@ function createGameBoard(board: (string | null)[][], gameId: string) {
     const keyboardRow = [];
     for (let col = 0; col < 3; col++) {
       const cell = board[row][col];
-      const text = cell || '⬜';
+      const text = cell === 'X' ? '❌' : cell === 'O' ? '⭕' : '⬜';
       keyboardRow.push({
         text: text,
         callback_data: `move_${gameId}_${row}_${col}`
@@ -315,508 +361,574 @@ function generateInviteCode(): string {
 
 // Обработка команд
 async function handleCommand(message: any, user: any) {
-  const chatId = message.chat.id;
-  const text = message.text;
-  
-  if (text === '/start' || text === '/menu') {
-    await sendMessage(chatId, 
-      `🎮 <b>Добро пожаловать в TicTacToe Bot!</b>\n\n` +
-      `Привет, ${user.first_name}! Выберите режим игры:`,
-      getMainMenuKeyboard()
-    );
-  }
-  
-  else if (text === '/stats') {
-    await sendMessage(chatId,
-      `📊 <b>Ваша статистика:</b>\n\n` +
-      `🏆 Побед: ${user.wins}\n` +
-      `❌ Поражений: ${user.losses}\n` +
-      `🤝 Ничьих: ${user.draws}\n` +
-      `📈 Всего игр: ${user.wins + user.losses + user.draws}`,
-      { inline_keyboard: [[{ text: '🏠 Главное меню', callback_data: 'main_menu' }]] }
-    );
-  }
-  
-  else if (text.startsWith('/invite')) {
-    const inviteCode = generateInviteCode();
+  try {
+    const chatId = message.chat.id;
+    const text = message.text;
     
-    // Создаем игру
-    const { data: game, error: gameError } = await supabase
-      .from('games')
-      .insert({
-        player1_id: user.id,
-        game_type: 'multiplayer',
-        status: 'waiting',
-        invite_code: inviteCode
-      })
-      .select()
-      .single();
+    log('Handling command', { chatId, text, userId: user.id });
     
-    if (gameError) {
-      await sendMessage(chatId, '❌ Ошибка при создании игры');
-      return;
+    if (text === '/start' || text === '/menu') {
+      await sendMessage(chatId, 
+        `🎮 <b>Добро пожаловать в TicTacToe Bot!</b>\n\n` +
+        `Привет, ${user.first_name}! Выберите режим игры:`,
+        getMainMenuKeyboard()
+      );
     }
     
-    // Создаем приглашение
-    await supabase
-      .from('invitations')
-      .insert({
-        inviter_id: user.id,
-        invite_code: inviteCode,
-        game_id: game.id
-      });
-    
-    await sendMessage(chatId,
-      `🎯 <b>Приглашение создано!</b>\n\n` +
-      `Код приглашения: <code>${inviteCode}</code>\n\n` +
-      `Отправьте этот код другу, чтобы он мог присоединиться к игре командой:\n` +
-      `<code>/accept ${inviteCode}</code>`,
-      { inline_keyboard: [[{ text: '🏠 Главное меню', callback_data: 'main_menu' }]] }
-    );
-  }
-  
-  else if (text.startsWith('/accept ')) {
-    const inviteCode = text.split(' ')[1];
-    
-    if (!inviteCode) {
-      await sendMessage(chatId, '❌ Укажите код приглашения: /accept КОД');
-      return;
+    else if (text === '/stats') {
+      await sendMessage(chatId,
+        `📊 <b>Ваша статистика:</b>\n\n` +
+        `🏆 Побед: ${user.wins || 0}\n` +
+        `❌ Поражений: ${user.losses || 0}\n` +
+        `🤝 Ничьих: ${user.draws || 0}\n` +
+        `📈 Всего игр: ${(user.wins || 0) + (user.losses || 0) + (user.draws || 0)}`,
+        { inline_keyboard: [[{ text: '🏠 Главное меню', callback_data: 'main_menu' }]] }
+      );
     }
     
-    // Находим приглашение
-    const { data: invitation } = await supabase
-      .from('invitations')
-      .select('*, games(*)')
-      .eq('invite_code', inviteCode)
-      .eq('status', 'pending')
-      .single();
-    
-    if (!invitation) {
-      await sendMessage(chatId, '❌ Приглашение не найдено или уже использовано');
-      return;
+    else if (text.startsWith('/invite')) {
+      const inviteCode = generateInviteCode();
+      
+      log('Creating multiplayer game', { inviteCode, userId: user.id });
+      
+      // Создаем игру
+      const { data: game, error: gameError } = await supabase
+        .from('games')
+        .insert({
+          player1_id: user.id,
+          game_type: 'multiplayer',
+          status: 'waiting',
+          invite_code: inviteCode
+        })
+        .select()
+        .single();
+      
+      if (gameError) {
+        log('Error creating game', gameError);
+        await sendMessage(chatId, '❌ Ошибка при создании игры');
+        return;
+      }
+      
+      // Создаем приглашение
+      const { error: inviteError } = await supabase
+        .from('invitations')
+        .insert({
+          inviter_id: user.id,
+          invite_code: inviteCode,
+          game_id: game.id
+        });
+      
+      if (inviteError) {
+        log('Error creating invitation', inviteError);
+      }
+      
+      await sendMessage(chatId,
+        `🎯 <b>Приглашение создано!</b>\n\n` +
+        `Код приглашения: <code>${inviteCode}</code>\n\n` +
+        `Отправьте этот код другу, чтобы он мог присоединиться к игре командой:\n` +
+        `<code>/accept ${inviteCode}</code>`,
+        { inline_keyboard: [[{ text: '🏠 Главное меню', callback_data: 'main_menu' }]] }
+      );
     }
     
-    // Обновляем игру
-    const { data: game, error } = await supabase
-      .from('games')
-      .update({
-        player2_id: user.id,
-        status: 'active'
-      })
-      .eq('id', invitation.game_id)
-      .select()
-      .single();
-    
-    if (error) {
-      await sendMessage(chatId, '❌ Ошибка при присоединении к игре');
-      return;
+    else if (text.startsWith('/accept ')) {
+      const inviteCode = text.split(' ')[1];
+      
+      if (!inviteCode) {
+        await sendMessage(chatId, '❌ Укажите код приглашения: /accept КОД');
+        return;
+      }
+      
+      log('Accepting invitation', { inviteCode, userId: user.id });
+      
+      // Находим приглашение
+      const { data: invitation, error: inviteSelectError } = await supabase
+        .from('invitations')
+        .select('*, games(*)')
+        .eq('invite_code', inviteCode)
+        .eq('status', 'pending')
+        .single();
+      
+      if (inviteSelectError || !invitation) {
+        log('Invitation not found', { inviteCode, error: inviteSelectError });
+        await sendMessage(chatId, '❌ Приглашение не найдено или уже использовано');
+        return;
+      }
+      
+      // Обновляем игру
+      const { data: game, error: gameUpdateError } = await supabase
+        .from('games')
+        .update({
+          player2_id: user.id,
+          status: 'active'
+        })
+        .eq('id', invitation.game_id)
+        .select()
+        .single();
+      
+      if (gameUpdateError) {
+        log('Error updating game', gameUpdateError);
+        await sendMessage(chatId, '❌ Ошибка при присоединении к игре');
+        return;
+      }
+      
+      // Обновляем статус приглашения
+      await supabase
+        .from('invitations')
+        .update({ status: 'accepted' })
+        .eq('id', invitation.id);
+      
+      // Уведомляем обоих игроков
+      const board = game.board as (string | null)[][];
+      const gameText = `🎮 <b>Игра началась!</b>\n\nХод игрока ❌`;
+      
+      await sendMessage(chatId, gameText, createGameBoard(board, game.id));
+      
+      // Уведомляем создателя игры
+      const { data: inviter } = await supabase
+        .from('users')
+        .select('telegram_id')
+        .eq('id', invitation.inviter_id)
+        .single();
+      
+      if (inviter) {
+        await sendMessage(inviter.telegram_id, gameText, createGameBoard(board, game.id));
+      }
     }
     
-    // Обновляем статус приглашения
-    await supabase
-      .from('invitations')
-      .update({ status: 'accepted' })
-      .eq('id', invitation.id);
-    
-    // Уведомляем обоих игроков
-    const board = game.board as (string | null)[][];
-    const gameText = `🎮 <b>Игра началась!</b>\n\nХод игрока X`;
-    
-    await sendMessage(chatId, gameText, createGameBoard(board, game.id));
-    
-    // Уведомляем создателя игры
-    const { data: inviter } = await supabase
-      .from('users')
-      .select('telegram_id')
-      .eq('id', invitation.inviter_id)
-      .single();
-    
-    if (inviter) {
-      await sendMessage(inviter.telegram_id, gameText, createGameBoard(board, game.id));
-    }
-  }
-  
-  else if (text === '/leaderboard') {
-    const { data: leaders } = await supabase
-      .from('users')
-      .select('first_name, wins, losses, draws')
-      .order('wins', { ascending: false })
-      .limit(10);
-    
-    let leaderboardText = '🏆 <b>Таблица лидеров:</b>\n\n';
-    
-    if (leaders && leaders.length > 0) {
-      leaders.forEach((leader, index) => {
-        const total = leader.wins + leader.losses + leader.draws;
-        const winRate = total > 0 ? Math.round((leader.wins / total) * 100) : 0;
-        leaderboardText += `${index + 1}. ${leader.first_name}\n`;
-        leaderboardText += `   🏆 ${leader.wins} побед (${winRate}%)\n\n`;
-      });
-    } else {
-      leaderboardText += 'Пока нет данных';
+    else if (text === '/leaderboard') {
+      const { data: leaders } = await supabase
+        .from('users')
+        .select('first_name, wins, losses, draws')
+        .order('wins', { ascending: false })
+        .limit(10);
+      
+      let leaderboardText = '🏆 <b>Таблица лидеров:</b>\n\n';
+      
+      if (leaders && leaders.length > 0) {
+        leaders.forEach((leader, index) => {
+          const total = (leader.wins || 0) + (leader.losses || 0) + (leader.draws || 0);
+          const winRate = total > 0 ? Math.round(((leader.wins || 0) / total) * 100) : 0;
+          leaderboardText += `${index + 1}. ${leader.first_name}\n`;
+          leaderboardText += `   🏆 ${leader.wins || 0} побед (${winRate}%)\n\n`;
+        });
+      } else {
+        leaderboardText += 'Пока нет данных';
+      }
+      
+      await sendMessage(chatId, leaderboardText,
+        { inline_keyboard: [[{ text: '🏠 Главное меню', callback_data: 'main_menu' }]] }
+      );
     }
     
-    await sendMessage(chatId, leaderboardText,
-      { inline_keyboard: [[{ text: '🏠 Главное меню', callback_data: 'main_menu' }]] }
-    );
+    else {
+      // Неизвестная команда
+      await sendMessage(chatId, 
+        `❓ Неизвестная команда. Используйте /start для начала работы.`,
+        { inline_keyboard: [[{ text: '🏠 Главное меню', callback_data: 'main_menu' }]] }
+      );
+    }
+  } catch (error) {
+    log('Error in handleCommand', error);
+    throw error;
   }
 }
 
 // Обработка callback запросов
 async function handleCallback(callbackQuery: any, user: any) {
-  const chatId = callbackQuery.message.chat.id;
-  const messageId = callbackQuery.message.message_id;
-  const data = callbackQuery.data;
-  
-  if (data === 'main_menu') {
-    await editMessage(chatId, messageId,
-      `🎮 <b>Добро пожаловать в TicTacToe Bot!</b>\n\n` +
-      `Привет, ${user.first_name}! Выберите режим игры:`,
-      getMainMenuKeyboard()
-    );
-  }
-  
-  else if (data.startsWith('play_ai_')) {
-    const difficulty = data;
+  try {
+    const chatId = callbackQuery.message.chat.id;
+    const messageId = callbackQuery.message.message_id;
+    const data = callbackQuery.data;
     
-    // Создаем игру с AI
-    const { data: game, error } = await supabase
-      .from('games')
-      .insert({
-        player1_id: user.id,
-        game_type: difficulty,
-        status: 'active'
-      })
-      .select()
-      .single();
+    log('Handling callback', { chatId, messageId, data, userId: user.id });
     
-    if (error) {
-      await editMessage(chatId, messageId, '❌ Ошибка при создании игры');
-      return;
-    }
-    
-    const board = game.board as (string | null)[][];
-    await editMessage(chatId, messageId,
-      `🎮 <b>Игра с AI</b>\n\nВы играете за X, ваш ход!`,
-      createGameBoard(board, game.id)
-    );
-  }
-  
-  else if (data === 'play_multiplayer') {
-    await editMessage(chatId, messageId,
-      `👥 <b>Игра с другом</b>\n\n` +
-      `Для игры с другом используйте команды:\n` +
-      `• <code>/invite</code> - создать приглашение\n` +
-      `• <code>/accept КОД</code> - принять приглашение`,
-      { inline_keyboard: [[{ text: '🏠 Главное меню', callback_data: 'main_menu' }]] }
-    );
-  }
-  
-  else if (data === 'stats') {
-    await editMessage(chatId, messageId,
-      `📊 <b>Ваша статистика:</b>\n\n` +
-      `🏆 Побед: ${user.wins}\n` +
-      `❌ Поражений: ${user.losses}\n` +
-      `🤝 Ничьих: ${user.draws}\n` +
-      `📈 Всего игр: ${user.wins + user.losses + user.draws}`,
-      { inline_keyboard: [[{ text: '🏠 Главное меню', callback_data: 'main_menu' }]] }
-    );
-  }
-  
-  else if (data === 'leaderboard') {
-    const { data: leaders } = await supabase
-      .from('users')
-      .select('first_name, wins, losses, draws')
-      .order('wins', { ascending: false })
-      .limit(10);
-    
-    let leaderboardText = '🏆 <b>Таблица лидеров:</b>\n\n';
-    
-    if (leaders && leaders.length > 0) {
-      leaders.forEach((leader, index) => {
-        const total = leader.wins + leader.losses + leader.draws;
-        const winRate = total > 0 ? Math.round((leader.wins / total) * 100) : 0;
-        leaderboardText += `${index + 1}. ${leader.first_name}\n`;
-        leaderboardText += `   🏆 ${leader.wins} побед (${winRate}%)\n\n`;
-      });
-    } else {
-      leaderboardText += 'Пока нет данных';
-    }
-    
-    await editMessage(chatId, messageId, leaderboardText,
-      { inline_keyboard: [[{ text: '🏠 Главное меню', callback_data: 'main_menu' }]] }
-    );
-  }
-  
-  else if (data.startsWith('move_')) {
-    const [, gameId, rowStr, colStr] = data.split('_');
-    const row = parseInt(rowStr);
-    const col = parseInt(colStr);
-    
-    // Получаем игру
-    const { data: game } = await supabase
-      .from('games')
-      .select('*')
-      .eq('id', gameId)
-      .single();
-    
-    if (!game || game.status !== 'active') {
-      await editMessage(chatId, messageId, '❌ Игра не найдена или завершена');
-      return;
-    }
-    
-    const board = game.board as (string | null)[][];
-    
-    // Проверяем, что клетка пуста
-    if (board[row][col] !== null) {
-      return; // Клетка уже занята
-    }
-    
-    // Проверяем очередность хода
-    const isPlayer1 = game.player1_id === user.id;
-    const isPlayer2 = game.player2_id === user.id;
-    
-    if (game.game_type.startsWith('ai_')) {
-      // Игра с AI - игрок всегда X
-      if (!isPlayer1) return;
-      
-      // Ход игрока
-      board[row][col] = 'X';
-      
-      // Сохраняем ход
-      await supabase.from('game_moves').insert({
-        game_id: gameId,
-        player_id: user.id,
-        move_number: 1,
-        row,
-        col,
-        symbol: 'X'
-      });
-      
-      // Проверяем победу игрока
-      const winner = checkWinner(board);
-      if (winner === 'X') {
-        await supabase.from('games').update({
-          board,
-          status: 'finished',
-          winner: 'X'
-        }).eq('id', gameId);
-        
-        await supabase.from('users').update({
-          wins: user.wins + 1
-        }).eq('id', user.id);
-        
-        await editMessage(chatId, messageId,
-          `🎉 <b>Поздравляем! Вы победили!</b>\n\nИгра завершена.`,
-          { inline_keyboard: [[{ text: '🏠 Главное меню', callback_data: 'main_menu' }]] }
-        );
-        return;
-      }
-      
-      // Проверяем ничью
-      if (isBoardFull(board)) {
-        await supabase.from('games').update({
-          board,
-          status: 'finished',
-          winner: 'draw'
-        }).eq('id', gameId);
-        
-        await supabase.from('users').update({
-          draws: user.draws + 1
-        }).eq('id', user.id);
-        
-        await editMessage(chatId, messageId,
-          `🤝 <b>Ничья!</b>\n\nИгра завершена.`,
-          { inline_keyboard: [[{ text: '🏠 Главное меню', callback_data: 'main_menu' }]] }
-        );
-        return;
-      }
-      
-      // Ход AI
-      const aiMove = getBestMove(board, game.game_type);
-      board[aiMove.row][aiMove.col] = 'O';
-      
-      // Сохраняем ход AI
-      await supabase.from('game_moves').insert({
-        game_id: gameId,
-        move_number: 2,
-        row: aiMove.row,
-        col: aiMove.col,
-        symbol: 'O'
-      });
-      
-      // Проверяем победу AI
-      const aiWinner = checkWinner(board);
-      if (aiWinner === 'O') {
-        await supabase.from('games').update({
-          board,
-          status: 'finished',
-          winner: 'O'
-        }).eq('id', gameId);
-        
-        await supabase.from('users').update({
-          losses: user.losses + 1
-        }).eq('id', user.id);
-        
-        await editMessage(chatId, messageId,
-          `😔 <b>AI победил!</b>\n\nПопробуйте еще раз!`,
-          { inline_keyboard: [[{ text: '🏠 Главное меню', callback_data: 'main_menu' }]] }
-        );
-        return;
-      }
-      
-      // Проверяем ничью после хода AI
-      if (isBoardFull(board)) {
-        await supabase.from('games').update({
-          board,
-          status: 'finished',
-          winner: 'draw'
-        }).eq('id', gameId);
-        
-        await supabase.from('users').update({
-          draws: user.draws + 1
-        }).eq('id', user.id);
-        
-        await editMessage(chatId, messageId,
-          `🤝 <b>Ничья!</b>\n\nИгра завершена.`,
-          { inline_keyboard: [[{ text: '🏠 Главное меню', callback_data: 'main_menu' }]] }
-        );
-        return;
-      }
-      
-      // Обновляем игру
-      await supabase.from('games').update({ board }).eq('id', gameId);
-      
+    if (data === 'main_menu') {
       await editMessage(chatId, messageId,
-        `🎮 <b>Игра с AI</b>\n\nВаш ход!`,
-        createGameBoard(board, gameId)
+        `🎮 <b>Добро пожаловать в TicTacToe Bot!</b>\n\n` +
+        `Привет, ${user.first_name}! Выберите режим игры:`,
+        getMainMenuKeyboard()
       );
     }
     
-    else {
-      // Мультиплеер игра
-      const currentSymbol = game.current_player;
-      const isCurrentPlayer = (currentSymbol === 'X' && isPlayer1) || (currentSymbol === 'O' && isPlayer2);
+    else if (data.startsWith('play_ai_')) {
+      const difficulty = data;
       
-      if (!isCurrentPlayer) {
-        return; // Не ваш ход
+      log('Creating AI game', { difficulty, userId: user.id });
+      
+      // Создаем игру с AI
+      const { data: game, error: gameError } = await supabase
+        .from('games')
+        .insert({
+          player1_id: user.id,
+          game_type: difficulty,
+          status: 'active'
+        })
+        .select()
+        .single();
+      
+      if (gameError) {
+        log('Error creating AI game', gameError);
+        await editMessage(chatId, messageId, '❌ Ошибка при создании игры');
+        return;
       }
       
-      // Делаем ход
-      board[row][col] = currentSymbol;
-      const nextPlayer = currentSymbol === 'X' ? 'O' : 'X';
+      const board = game.board as (string | null)[][];
+      await editMessage(chatId, messageId,
+        `🎮 <b>Игра с AI</b>\n\nВы играете за ❌, ваш ход!`,
+        createGameBoard(board, game.id)
+      );
+    }
+    
+    else if (data === 'play_multiplayer') {
+      await editMessage(chatId, messageId,
+        `👥 <b>Игра с другом</b>\n\n` +
+        `Для игры с другом используйте команды:\n` +
+        `• <code>/invite</code> - создать приглашение\n` +
+        `• <code>/accept КОД</code> - принять приглашение`,
+        { inline_keyboard: [[{ text: '🏠 Главное меню', callback_data: 'main_menu' }]] }
+      );
+    }
+    
+    else if (data === 'stats') {
+      await editMessage(chatId, messageId,
+        `📊 <b>Ваша статистика:</b>\n\n` +
+        `🏆 Побед: ${user.wins || 0}\n` +
+        `❌ Поражений: ${user.losses || 0}\n` +
+        `🤝 Ничьих: ${user.draws || 0}\n` +
+        `📈 Всего игр: ${(user.wins || 0) + (user.losses || 0) + (user.draws || 0)}`,
+        { inline_keyboard: [[{ text: '🏠 Главное меню', callback_data: 'main_menu' }]] }
+      );
+    }
+    
+    else if (data === 'leaderboard') {
+      const { data: leaders } = await supabase
+        .from('users')
+        .select('first_name, wins, losses, draws')
+        .order('wins', { ascending: false })
+        .limit(10);
       
-      // Сохраняем ход
-      await supabase.from('game_moves').insert({
-        game_id: gameId,
-        player_id: user.id,
-        move_number: 1,
-        row,
-        col,
-        symbol: currentSymbol
-      });
+      let leaderboardText = '🏆 <b>Таблица лидеров:</b>\n\n';
       
-      // Проверяем победу
-      const winner = checkWinner(board);
-      if (winner) {
+      if (leaders && leaders.length > 0) {
+        leaders.forEach((leader, index) => {
+          const total = (leader.wins || 0) + (leader.losses || 0) + (leader.draws || 0);
+          const winRate = total > 0 ? Math.round(((leader.wins || 0) / total) * 100) : 0;
+          leaderboardText += `${index + 1}. ${leader.first_name}\n`;
+          leaderboardText += `   🏆 ${leader.wins || 0} побед (${winRate}%)\n\n`;
+        });
+      } else {
+        leaderboardText += 'Пока нет данных';
+      }
+      
+      await editMessage(chatId, messageId, leaderboardText,
+        { inline_keyboard: [[{ text: '🏠 Главное меню', callback_data: 'main_menu' }]] }
+      );
+    }
+    
+    else if (data.startsWith('move_')) {
+      const [, gameId, rowStr, colStr] = data.split('_');
+      const row = parseInt(rowStr);
+      const col = parseInt(colStr);
+      
+      log('Processing move', { gameId, row, col, userId: user.id });
+      
+      // Получаем игру
+      const { data: game, error: gameSelectError } = await supabase
+        .from('games')
+        .select('*')
+        .eq('id', gameId)
+        .single();
+      
+      if (gameSelectError || !game || game.status !== 'active') {
+        log('Game not found or not active', { gameId, error: gameSelectError });
+        await editMessage(chatId, messageId, '❌ Игра не найдена или завершена');
+        return;
+      }
+      
+      const board = game.board as (string | null)[][];
+      
+      // Проверяем, что клетка пуста
+      if (board[row][col] !== null) {
+        log('Cell already occupied', { row, col });
+        return; // Клетка уже занята
+      }
+      
+      // Проверяем очередность хода
+      const isPlayer1 = game.player1_id === user.id;
+      const isPlayer2 = game.player2_id === user.id;
+      
+      if (game.game_type.startsWith('ai_')) {
+        // Игра с AI - игрок всегда X
+        if (!isPlayer1) {
+          log('Not player1 in AI game');
+          return;
+        }
+        
+        // Ход игрока
+        board[row][col] = 'X';
+        
+        // Сохраняем ход
+        await supabase.from('game_moves').insert({
+          game_id: gameId,
+          player_id: user.id,
+          move_number: 1,
+          row,
+          col,
+          symbol: 'X'
+        });
+        
+        // Проверяем победу игрока
+        const winner = checkWinner(board);
+        if (winner === 'X') {
+          await supabase.from('games').update({
+            board,
+            status: 'finished',
+            winner: 'X'
+          }).eq('id', gameId);
+          
+          await supabase.from('users').update({
+            wins: (user.wins || 0) + 1
+          }).eq('id', user.id);
+          
+          await editMessage(chatId, messageId,
+            `🎉 <b>Поздравляем! Вы победили!</b>\n\nИгра завершена.`,
+            { inline_keyboard: [[{ text: '🏠 Главное меню', callback_data: 'main_menu' }]] }
+          );
+          return;
+        }
+        
+        // Проверяем ничью
+        if (isBoardFull(board)) {
+          await supabase.from('games').update({
+            board,
+            status: 'finished',
+            winner: 'draw'
+          }).eq('id', gameId);
+          
+          await supabase.from('users').update({
+            draws: (user.draws || 0) + 1
+          }).eq('id', user.id);
+          
+          await editMessage(chatId, messageId,
+            `🤝 <b>Ничья!</b>\n\nИгра завершена.`,
+            { inline_keyboard: [[{ text: '🏠 Главное меню', callback_data: 'main_menu' }]] }
+          );
+          return;
+        }
+        
+        // Ход AI
+        const aiMove = getBestMove(board, game.game_type);
+        board[aiMove.row][aiMove.col] = 'O';
+        
+        // Сохраняем ход AI
+        await supabase.from('game_moves').insert({
+          game_id: gameId,
+          move_number: 2,
+          row: aiMove.row,
+          col: aiMove.col,
+          symbol: 'O'
+        });
+        
+        // Проверяем победу AI
+        const aiWinner = checkWinner(board);
+        if (aiWinner === 'O') {
+          await supabase.from('games').update({
+            board,
+            status: 'finished',
+            winner: 'O'
+          }).eq('id', gameId);
+          
+          await supabase.from('users').update({
+            losses: (user.losses || 0) + 1
+          }).eq('id', user.id);
+          
+          await editMessage(chatId, messageId,
+            `😔 <b>AI победил!</b>\n\nПопробуйте еще раз!`,
+            { inline_keyboard: [[{ text: '🏠 Главное меню', callback_data: 'main_menu' }]] }
+          );
+          return;
+        }
+        
+        // Проверяем ничью после хода AI
+        if (isBoardFull(board)) {
+          await supabase.from('games').update({
+            board,
+            status: 'finished',
+            winner: 'draw'
+          }).eq('id', gameId);
+          
+          await supabase.from('users').update({
+            draws: (user.draws || 0) + 1
+          }).eq('id', user.id);
+          
+          await editMessage(chatId, messageId,
+            `🤝 <b>Ничья!</b>\n\nИгра завершена.`,
+            { inline_keyboard: [[{ text: '🏠 Главное меню', callback_data: 'main_menu' }]] }
+          );
+          return;
+        }
+        
+        // Обновляем игру
+        await supabase.from('games').update({ board }).eq('id', gameId);
+        
+        await editMessage(chatId, messageId,
+          `🎮 <b>Игра с AI</b>\n\nВаш ход!`,
+          createGameBoard(board, gameId)
+        );
+      }
+      
+      else {
+        // Мультиплеер игра
+        const currentSymbol = game.current_player;
+        const isCurrentPlayer = (currentSymbol === 'X' && isPlayer1) || (currentSymbol === 'O' && isPlayer2);
+        
+        if (!isCurrentPlayer) {
+          log('Not current player turn');
+          return; // Не ваш ход
+        }
+        
+        // Делаем ход
+        board[row][col] = currentSymbol;
+        const nextPlayer = currentSymbol === 'X' ? 'O' : 'X';
+        
+        // Сохраняем ход
+        await supabase.from('game_moves').insert({
+          game_id: gameId,
+          player_id: user.id,
+          move_number: 1,
+          row,
+          col,
+          symbol: currentSymbol
+        });
+        
+        // Проверяем победу
+        const winner = checkWinner(board);
+        if (winner) {
+          await supabase.from('games').update({
+            board,
+            status: 'finished',
+            winner,
+            current_player: nextPlayer
+          }).eq('id', gameId);
+          
+          // Обновляем статистику
+          const winnerId = winner === 'X' ? game.player1_id : game.player2_id;
+          const loserId = winner === 'X' ? game.player2_id : game.player1_id;
+          
+          if (winnerId) {
+            const { data: winnerUser } = await supabase.from('users').select('wins').eq('id', winnerId).single();
+            await supabase.from('users').update({ wins: (winnerUser?.wins || 0) + 1 }).eq('id', winnerId);
+          }
+          
+          if (loserId) {
+            const { data: loserUser } = await supabase.from('users').select('losses').eq('id', loserId).single();
+            await supabase.from('users').update({ losses: (loserUser?.losses || 0) + 1 }).eq('id', loserId);
+          }
+          
+          const winText = `🎉 <b>Игра завершена!</b>\n\nПобедил игрок ${winner === 'X' ? '❌' : '⭕'}!`;
+          
+          await editMessage(chatId, messageId, winText,
+            { inline_keyboard: [[{ text: '🏠 Главное меню', callback_data: 'main_menu' }]] }
+          );
+          
+          // Уведомляем другого игрока
+          const otherPlayerId = isPlayer1 ? game.player2_id : game.player1_id;
+          if (otherPlayerId) {
+            const { data: otherPlayer } = await supabase
+              .from('users')
+              .select('telegram_id')
+              .eq('id', otherPlayerId)
+              .single();
+            
+            if (otherPlayer) {
+              await sendMessage(otherPlayer.telegram_id, winText,
+                { inline_keyboard: [[{ text: '🏠 Главное меню', callback_data: 'main_menu' }]] }
+              );
+            }
+          }
+          
+          return;
+        }
+        
+        // Проверяем ничью
+        if (isBoardFull(board)) {
+          await supabase.from('games').update({
+            board,
+            status: 'finished',
+            winner: 'draw'
+          }).eq('id', gameId);
+          
+          if (game.player1_id) {
+            const { data: player1 } = await supabase.from('users').select('draws').eq('id', game.player1_id).single();
+            await supabase.from('users').update({ draws: (player1?.draws || 0) + 1 }).eq('id', game.player1_id);
+          }
+          
+          if (game.player2_id) {
+            const { data: player2 } = await supabase.from('users').select('draws').eq('id', game.player2_id).single();
+            await supabase.from('users').update({ draws: (player2?.draws || 0) + 1 }).eq('id', game.player2_id);
+          }
+          
+          const drawText = `🤝 <b>Ничья!</b>\n\nИгра завершена.`;
+          
+          await editMessage(chatId, messageId, drawText,
+            { inline_keyboard: [[{ text: '🏠 Главное меню', callback_data: 'main_menu' }]] }
+          );
+          
+          // Уведомляем другого игрока
+          const otherPlayerId = isPlayer1 ? game.player2_id : game.player1_id;
+          if (otherPlayerId) {
+            const { data: otherPlayer } = await supabase
+              .from('users')
+              .select('telegram_id')
+              .eq('id', otherPlayerId)
+              .single();
+            
+            if (otherPlayer) {
+              await sendMessage(otherPlayer.telegram_id, drawText,
+                { inline_keyboard: [[{ text: '🏠 Главное меню', callback_data: 'main_menu' }]] }
+              );
+            }
+          }
+          
+          return;
+        }
+        
+        // Обновляем игру
         await supabase.from('games').update({
           board,
-          status: 'finished',
-          winner,
           current_player: nextPlayer
         }).eq('id', gameId);
         
-        // Обновляем статистику
-        const winnerId = winner === 'X' ? game.player1_id : game.player2_id;
-        const loserId = winner === 'X' ? game.player2_id : game.player1_id;
+        const gameText = `🎮 <b>Мультиплеер игра</b>\n\nХод игрока ${nextPlayer === 'X' ? '❌' : '⭕'}`;
         
-        await supabase.from('users').update({ wins: user.wins + 1 }).eq('id', winnerId);
-        await supabase.from('users').update({ losses: user.losses + 1 }).eq('id', loserId);
-        
-        const winText = `🎉 <b>Игра завершена!</b>\n\nПобедил игрок ${winner}!`;
-        
-        await editMessage(chatId, messageId, winText,
-          { inline_keyboard: [[{ text: '🏠 Главное меню', callback_data: 'main_menu' }]] }
-        );
+        await editMessage(chatId, messageId, gameText, createGameBoard(board, gameId));
         
         // Уведомляем другого игрока
         const otherPlayerId = isPlayer1 ? game.player2_id : game.player1_id;
-        const { data: otherPlayer } = await supabase
-          .from('users')
-          .select('telegram_id')
-          .eq('id', otherPlayerId)
-          .single();
-        
-        if (otherPlayer) {
-          await sendMessage(otherPlayer.telegram_id, winText,
-            { inline_keyboard: [[{ text: '🏠 Главное меню', callback_data: 'main_menu' }]] }
-          );
+        if (otherPlayerId) {
+          const { data: otherPlayer } = await supabase
+            .from('users')
+            .select('telegram_id')
+            .eq('id', otherPlayerId)
+            .single();
+          
+          if (otherPlayer) {
+            await sendMessage(otherPlayer.telegram_id, gameText, createGameBoard(board, gameId));
+          }
         }
-        
-        return;
-      }
-      
-      // Проверяем ничью
-      if (isBoardFull(board)) {
-        await supabase.from('games').update({
-          board,
-          status: 'finished',
-          winner: 'draw'
-        }).eq('id', gameId);
-        
-        await supabase.from('users').update({ draws: user.draws + 1 }).eq('id', game.player1_id);
-        await supabase.from('users').update({ draws: user.draws + 1 }).eq('id', game.player2_id);
-        
-        const drawText = `🤝 <b>Ничья!</b>\n\nИгра завершена.`;
-        
-        await editMessage(chatId, messageId, drawText,
-          { inline_keyboard: [[{ text: '🏠 Главное меню', callback_data: 'main_menu' }]] }
-        );
-        
-        // Уведомляем другого игрока
-        const otherPlayerId = isPlayer1 ? game.player2_id : game.player1_id;
-        const { data: otherPlayer } = await supabase
-          .from('users')
-          .select('telegram_id')
-          .eq('id', otherPlayerId)
-          .single();
-        
-        if (otherPlayer) {
-          await sendMessage(otherPlayer.telegram_id, drawText,
-            { inline_keyboard: [[{ text: '🏠 Главное меню', callback_data: 'main_menu' }]] }
-          );
-        }
-        
-        return;
-      }
-      
-      // Обновляем игру
-      await supabase.from('games').update({
-        board,
-        current_player: nextPlayer
-      }).eq('id', gameId);
-      
-      const gameText = `🎮 <b>Мультиплеер игра</b>\n\nХод игрока ${nextPlayer}`;
-      
-      await editMessage(chatId, messageId, gameText, createGameBoard(board, gameId));
-      
-      // Уведомляем другого игрока
-      const otherPlayerId = isPlayer1 ? game.player2_id : game.player1_id;
-      const { data: otherPlayer } = await supabase
-        .from('users')
-        .select('telegram_id')
-        .eq('id', otherPlayerId)
-        .single();
-      
-      if (otherPlayer) {
-        await sendMessage(otherPlayer.telegram_id, gameText, createGameBoard(board, gameId));
       }
     }
+  } catch (error) {
+    log('Error in handleCallback', error);
+    throw error;
   }
 }
 
 Deno.serve(async (req: Request) => {
   try {
+    log('Received request', { method: req.method, url: req.url });
+    
     if (req.method === 'OPTIONS') {
       return new Response(null, {
         status: 200,
@@ -829,6 +941,7 @@ Deno.serve(async (req: Request) => {
     }
 
     const update: TelegramUpdate = await req.json();
+    log('Received update', update);
     
     if (update.message) {
       const user = await getOrCreateUser(update.message.from);
@@ -855,10 +968,10 @@ Deno.serve(async (req: Request) => {
       headers: corsHeaders,
     });
   } catch (error) {
-    console.error('Error processing update:', error);
-    return new Response('Internal Server Error', {
+    log('Critical error processing update', error);
+    return new Response(JSON.stringify({ error: error.message }), {
       status: 500,
-      headers: corsHeaders,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }
 });
