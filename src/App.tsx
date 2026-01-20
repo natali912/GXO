@@ -4,8 +4,54 @@ import { Copy, Check, ExternalLink, Bot, Database, Zap } from 'lucide-react';
 function App() {
   const [botToken, setBotToken] = useState('');
   const [copiedWebhook, setCopiedWebhook] = useState(false);
+  const [diagnostics, setDiagnostics] = useState<any>(null);
+  const [isCheckingDiagnostics, setIsCheckingDiagnostics] = useState(false);
 
   const webhookUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/telegram-bot`;
+
+  const runDiagnostics = async () => {
+    setIsCheckingDiagnostics(true);
+    try {
+      const response = await fetch(webhookUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          test: true,
+          message: {
+            message_id: 1,
+            from: {
+              id: 12345,
+              is_bot: false,
+              first_name: 'Test',
+              username: 'test'
+            },
+            chat: {
+              id: 12345,
+              type: 'private'
+            },
+            text: '/start'
+          }
+        })
+      });
+      
+      const result = await response.text();
+      setDiagnostics({
+        status: response.status,
+        statusText: response.statusText,
+        response: result,
+        timestamp: new Date().toLocaleString()
+      });
+    } catch (error) {
+      setDiagnostics({
+        status: 'ERROR',
+        error: error.message,
+        timestamp: new Date().toLocaleString()
+      });
+    }
+    setIsCheckingDiagnostics(false);
+  };
 
   const copyToClipboard = async (text: string) => {
     await navigator.clipboard.writeText(text);
@@ -90,6 +136,37 @@ function App() {
               <p>3. <strong>База данных:</strong> Созданы ли все таблицы в Supabase?</p>
               <p>4. <strong>Логи:</strong> Проверьте логи Edge Functions в Supabase Dashboard</p>
             </div>
+            
+            <div className="mt-4">
+              <button
+                onClick={runDiagnostics}
+                disabled={isCheckingDiagnostics}
+                className="px-4 py-2 bg-yellow-600 text-white rounded-md hover:bg-yellow-700 transition disabled:opacity-50"
+              >
+                {isCheckingDiagnostics ? 'Проверяю...' : '🔍 Запустить диагностику'}
+              </button>
+            </div>
+            
+            {diagnostics && (
+              <div className="mt-4 p-3 bg-white rounded border">
+                <h4 className="font-semibold text-gray-800 mb-2">Результат диагностики:</h4>
+                <div className="text-sm space-y-1">
+                  <p><strong>Статус:</strong> <span className={diagnostics.status === 200 ? 'text-green-600' : 'text-red-600'}>{diagnostics.status} {diagnostics.statusText}</span></p>
+                  <p><strong>Время:</strong> {diagnostics.timestamp}</p>
+                  {diagnostics.error && (
+                    <p><strong>Ошибка:</strong> <span className="text-red-600">{diagnostics.error}</span></p>
+                  )}
+                  {diagnostics.response && (
+                    <div>
+                      <strong>Ответ:</strong>
+                      <pre className="mt-1 p-2 bg-gray-100 rounded text-xs overflow-auto max-h-32">
+                        {diagnostics.response}
+                      </pre>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="space-y-8">
@@ -131,24 +208,33 @@ function App() {
                 </div>
                 <div className="flex-1">
                   <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                    Добавьте токен бота в переменные окружения
+                    Настройте переменные окружения в Supabase
                   </h3>
                   <p className="text-gray-600 mb-3">
-                    Добавьте токен в переменные окружения Supabase:
+                    <strong>ВАЖНО:</strong> Переменные окружения нужно добавлять именно в Edge Functions, а не в общие настройки проекта!
                   </p>
                   <div className="bg-gray-50 p-4 rounded-lg border">
                     <p className="text-sm text-gray-700 mb-2">
-                      1. Откройте настройки проекта Supabase
+                      1. Откройте Supabase Dashboard → ваш проект
                     </p>
                     <p className="text-sm text-gray-700 mb-2">
-                      2. Перейдите в раздел "Edge Functions"
+                      2. Перейдите в раздел "Edge Functions" (в левом меню)
                     </p>
                     <p className="text-sm text-gray-700 mb-2">
-                      3. Добавьте переменную окружения:
+                      3. Нажмите на функцию "telegram-bot"
+                    </p>
+                    <p className="text-sm text-gray-700 mb-2">
+                      4. Перейдите на вкладку "Settings"
+                    </p>
+                    <p className="text-sm text-gray-700 mb-2">
+                      5. В разделе "Environment Variables" добавьте:
                     </p>
                     <code className="block bg-white p-2 rounded border text-sm">
                       TELEGRAM_BOT_TOKEN = ваш_токен_от_BotFather
                     </code>
+                    <p className="text-sm text-gray-500 mt-2">
+                      <strong>Примечание:</strong> SUPABASE_URL и SUPABASE_SERVICE_ROLE_KEY должны быть доступны автоматически
+                    </p>
                   </div>
                 </div>
               </div>
@@ -241,23 +327,61 @@ function App() {
                 </div>
                 <div className="flex-1">
                   <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                    Устранение ошибки 401
+                  </h3>
+                  <p className="text-gray-600 mb-3">
+                    Ошибка 401 обычно означает проблемы с аутентификацией. Проверьте:
+                  </p>
+                  <div className="bg-gray-50 p-4 rounded-lg border">
+                    <p className="text-sm text-gray-700 mb-2 font-semibold">
+                      Основные причины ошибки 401:
+                    </p>
+                    <p className="text-sm text-gray-700 mb-2">
+                      1. <strong>Не установлен TELEGRAM_BOT_TOKEN</strong> - добавьте в Edge Functions → Settings → Environment Variables
+                    </p>
+                    <p className="text-sm text-gray-700 mb-2">
+                      2. <strong>Проблемы с базой данных</strong> - проверьте RLS политики и права доступа
+                    </p>
+                    <p className="text-sm text-gray-700 mb-2">
+                      3. <strong>Неправильный Service Role Key</strong> - должен быть доступен автоматически
+                    </p>
+                    <p className="text-sm text-gray-700">
+                      4. <strong>Проблемы с CORS</strong> - проверьте заголовки запросов
+                    </p>
+                    <div className="mt-3 p-2 bg-blue-50 rounded">
+                      <p className="text-sm text-blue-700">
+                        💡 <strong>Совет:</strong> Используйте кнопку "Запустить диагностику" выше для быстрой проверки
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <div className="border-l-4 border-indigo-600 pl-6">
+              <div className="flex items-start">
+                <div className="flex-shrink-0 w-8 h-8 bg-indigo-600 rounded-full flex items-center justify-center text-white font-bold mr-4">
+                  6
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-lg font-semibold text-gray-900 mb-2">
                     Проверьте логи
                   </h3>
                   <p className="text-gray-600 mb-3">
-                    Если бот не работает, проверьте логи в Supabase Dashboard:
+                    Для детальной диагностики проверьте логи в Supabase Dashboard:
                   </p>
                   <div className="bg-gray-50 p-4 rounded-lg border">
                     <p className="text-sm text-gray-700 mb-2">
-                      1. Откройте Supabase Dashboard
+                      1. Supabase Dashboard → Edge Functions → telegram-bot
                     </p>
                     <p className="text-sm text-gray-700 mb-2">
-                      2. Перейдите в "Edge Functions" → "telegram-bot"
+                      2. Вкладка "Logs" для просмотра ошибок
                     </p>
                     <p className="text-sm text-gray-700 mb-2">
-                      3. Нажмите "Logs" для просмотра ошибок
+                      3. Отправьте /start боту и проверьте новые логи
                     </p>
                     <p className="text-sm text-gray-700">
-                      4. Отправьте /start боту и проверьте появились ли новые логи
+                      4. Ищите сообщения с префиксом [TelegramBot] для отладки
                     </p>
                   </div>
                 </div>

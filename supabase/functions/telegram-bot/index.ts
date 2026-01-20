@@ -6,11 +6,24 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 };
 
-// Инициализация Supabase клиента
-const supabase = createClient(
-  Deno.env.get('SUPABASE_URL') ?? '',
-  Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-);
+// Инициализация Supabase клиента с проверкой переменных окружения
+function createSupabaseClient() {
+  const supabaseUrl = Deno.env.get('SUPABASE_URL');
+  const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  
+  if (!supabaseUrl || !supabaseServiceKey) {
+    throw new Error('Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY environment variables');
+  }
+  
+  return createClient(supabaseUrl, supabaseServiceKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false
+    }
+  });
+}
+
+const supabase = createSupabaseClient();
 
 interface TelegramUpdate {
   update_id: number;
@@ -56,6 +69,17 @@ function log(message: string, data?: any) {
 async function getOrCreateUser(telegramUser: any) {
   try {
     log('Getting or creating user', { telegram_id: telegramUser.id });
+    
+    // Тестируем подключение к базе данных
+    const { data: testConnection, error: connectionError } = await supabase
+      .from('users')
+      .select('count')
+      .limit(1);
+    
+    if (connectionError) {
+      log('Database connection error', connectionError);
+      throw new Error(`Database connection failed: ${connectionError.message}`);
+    }
     
     const { data: existingUser, error: selectError } = await supabase
       .from('users')
@@ -103,7 +127,8 @@ async function sendMessage(chatId: number, text: string, replyMarkup?: any) {
   try {
     const botToken = Deno.env.get('TELEGRAM_BOT_TOKEN');
     if (!botToken) {
-      throw new Error('TELEGRAM_BOT_TOKEN not set');
+      log('TELEGRAM_BOT_TOKEN missing in sendMessage');
+      throw new Error('TELEGRAM_BOT_TOKEN not configured in environment variables');
     }
 
     const payload: any = {
@@ -143,7 +168,8 @@ async function editMessage(chatId: number, messageId: number, text: string, repl
   try {
     const botToken = Deno.env.get('TELEGRAM_BOT_TOKEN');
     if (!botToken) {
-      throw new Error('TELEGRAM_BOT_TOKEN not set');
+      log('TELEGRAM_BOT_TOKEN missing in editMessage');
+      throw new Error('TELEGRAM_BOT_TOKEN not configured in environment variables');
     }
 
     const payload: any = {
@@ -927,6 +953,40 @@ async function handleCallback(callbackQuery: any, user: any) {
 
 Deno.serve(async (req: Request) => {
   try {
+    // Проверяем переменные окружения при каждом запросе
+    const botToken = Deno.env.get('TELEGRAM_BOT_TOKEN');
+    const supabaseUrl = Deno.env.get('SUPABASE_URL');
+    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+    
+    log('Environment check', {
+      hasBotToken: !!botToken,
+      hasSupabaseUrl: !!supabaseUrl,
+      hasServiceKey: !!supabaseServiceKey,
+      supabaseUrlPrefix: supabaseUrl ? supabaseUrl.substring(0, 20) + '...' : 'missing'
+    });
+    
+    if (!botToken) {
+      log('Missing TELEGRAM_BOT_TOKEN');
+      return new Response(JSON.stringify({ 
+        error: 'TELEGRAM_BOT_TOKEN not configured',
+        details: 'Please add TELEGRAM_BOT_TOKEN to Edge Function environment variables'
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    
+    if (!supabaseUrl || !supabaseServiceKey) {
+      log('Missing Supabase credentials');
+      return new Response(JSON.stringify({ 
+        error: 'Missing Supabase credentials',
+        details: 'SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY should be automatically available'
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    
     log('Received request', { method: req.method, url: req.url });
     
     if (req.method === 'OPTIONS') {
